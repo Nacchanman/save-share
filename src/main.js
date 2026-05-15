@@ -10,6 +10,24 @@ const PEOPLE = [
   { id: 'sora', name: 'Sora', avatar: 'そ', bio: '社会とカルチャーを読む' },
 ];
 
+const SAMPLE_IMAGES = {
+  design: [
+    'https://images.unsplash.com/photo-1558655146-9f40138edfeb?auto=format&fit=crop&w=900&q=80',
+    'https://images.unsplash.com/photo-1518005020951-eccb494ad742?auto=format&fit=crop&w=900&q=80',
+  ],
+  ai: [
+    'https://images.unsplash.com/photo-1677442136019-21780ecad995?auto=format&fit=crop&w=900&q=80',
+    'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=900&q=80',
+  ],
+  library: [
+    'https://images.unsplash.com/photo-1521587760476-6c12a4b040da?auto=format&fit=crop&w=900&q=80',
+    'https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?auto=format&fit=crop&w=900&q=80',
+  ],
+  web: [
+    'https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=900&q=80',
+  ],
+};
+
 const SAMPLE_ARTICLES = [
   {
     id: 'friend-1',
@@ -18,7 +36,8 @@ const SAMPLE_ARTICLES = [
     url: 'https://example.com/design-systems',
     title: '小さなチームで育てるデザインシステム',
     folder: FOLDERS.shared,
-    memo: 'あとでコンポーネント棚卸しの参考にする',
+    memo: 'コンポーネント棚卸しの参考にする',
+    images: SAMPLE_IMAGES.design,
     likes: 18,
     createdAt: Date.now() - 900000,
   },
@@ -30,6 +49,7 @@ const SAMPLE_ARTICLES = [
     title: 'AIエージェントで変わる個人の生産性',
     folder: FOLDERS.shared,
     memo: '週末に読む',
+    images: SAMPLE_IMAGES.ai,
     likes: 31,
     createdAt: Date.now() - 1800000,
   },
@@ -41,6 +61,7 @@ const SAMPLE_ARTICLES = [
     title: '公共図書館とデジタルアーカイブの未来',
     folder: FOLDERS.shared,
     memo: '共有したい',
+    images: SAMPLE_IMAGES.library,
     likes: 12,
     createdAt: Date.now() - 3600000,
   },
@@ -54,23 +75,34 @@ const MY_INITIAL_ARTICLES = [
     url: 'https://developer.mozilla.org/ja/docs/Web/API/Pointer_events',
     title: 'Pointer events - Web API | MDN',
     folder: FOLDERS.important,
-    memo: 'スワイプUI実装の確認に使う',
+    memo: 'スワイプUI実装の確認',
+    images: SAMPLE_IMAGES.web,
     likes: 7,
     createdAt: Date.now() - 120000,
   },
 ];
 
 let state = loadState();
-let activePage = 'private';
+let activePage = 'feed';
 
 function loadState() {
   const stored = localStorage.getItem('save-share-state');
-  if (stored) return JSON.parse(stored);
+  if (stored) return migrateState(JSON.parse(stored));
   return {
     currentUser: { id: 'me', name: 'You' },
     following: ['mika', 'ren'],
     articles: [...MY_INITIAL_ARTICLES, ...SAMPLE_ARTICLES],
     likedArticleIds: [],
+  };
+}
+
+function migrateState(current) {
+  return {
+    ...current,
+    articles: current.articles.map((article) => ({
+      ...article,
+      images: Array.isArray(article.images) && article.images.length ? article.images : inferArticleImages(article.url, article.title),
+    })),
   };
 }
 
@@ -91,6 +123,15 @@ function inferTitle(url) {
   } catch {
     return url;
   }
+}
+
+function inferArticleImages(url, title = '') {
+  const value = `${url} ${title}`.toLowerCase();
+  if (/\.(png|jpe?g|webp|gif|avif)(\?.*)?$/.test(url)) return [url];
+  if (value.includes('design')) return SAMPLE_IMAGES.design;
+  if (value.includes('ai') || value.includes('agent')) return SAMPLE_IMAGES.ai;
+  if (value.includes('library') || value.includes('archive')) return SAMPLE_IMAGES.library;
+  return SAMPLE_IMAGES.web;
 }
 
 function getCollections() {
@@ -130,60 +171,56 @@ function render() {
   const shell = el('main', { className: 'app-shell' });
   shell.append(renderHero(), renderTabs({ importantArticles, tiredArticles, feedArticles }));
 
+  if (activePage === 'feed') {
+    const content = document.createDocumentFragment();
+    content.append(renderArticleList(feedArticles, 'まだ何もありません', (article) => renderArticleCard({
+      article,
+      ownerLabel: article.ownerId === 'me' ? '自分' : article.ownerName,
+      actions: [
+        actionButton('保存', () => saveFromFeed(article)),
+        actionButton(`♥ ${article.likes}`, () => toggleLike(article.id), state.likedArticleIds.includes(article.id) ? 'liked' : 'ghost'),
+      ],
+    })));
+    if (sharedMine.length > 0) content.append(el('p', { className: 'small-note', text: `共有中 ${sharedMine.length}件` }));
+    shell.append(renderPage('フィード', 'みんなのおすすめ', content));
+  }
+
   if (activePage === 'private') {
     shell.append(renderPage(
-      '重要フォルダ',
-      '左スワイプで共有フォルダ、右スワイプで「もういいフォルダ」に移動します。',
-      renderArticleList(importantArticles, '重要フォルダは空です。上のフォームからURLを追加してください。', (article) => renderArticleCard({
+      '重要',
+      '左で共有、右でゴミ箱',
+      renderArticleList(importantArticles, '重要は空です', (article) => renderArticleCard({
         article,
         showMemo: true,
-        leftHint: '共有へ',
-        rightHint: 'もういいへ',
+        leftHint: '共有',
+        rightHint: 'ゴミ箱',
         onSwipeLeft: () => updateArticle(article.id, { folder: FOLDERS.shared }),
         onSwipeRight: () => updateArticle(article.id, { folder: FOLDERS.tired }),
         onMemo: (memo) => updateArticle(article.id, { memo }),
         actions: [
-          actionButton('共有へ', () => updateArticle(article.id, { folder: FOLDERS.shared })),
-          actionButton('もういい', () => updateArticle(article.id, { folder: FOLDERS.tired }), 'ghost'),
+          actionButton('共有', () => updateArticle(article.id, { folder: FOLDERS.shared })),
+          actionButton('ゴミ箱', () => updateArticle(article.id, { folder: FOLDERS.tired }), 'ghost'),
         ],
       })),
     ));
-  }
-
-  if (activePage === 'feed') {
-    const content = document.createDocumentFragment();
-    content.append(renderArticleList(feedArticles, 'フィードは空です。友達をフォローするか、記事を共有してください。', (article) => renderArticleCard({
-      article,
-      ownerLabel: article.ownerId === 'me' ? 'あなたの共有' : `${article.ownerName} の共有`,
-      actions: [
-        actionButton('セーブ', () => saveFromFeed(article)),
-        actionButton(`♥ ${article.likes}`, () => toggleLike(article.id), state.likedArticleIds.includes(article.id) ? 'liked' : 'ghost'),
-      ],
-    })));
-    if (sharedMine.length > 0) content.append(el('p', { className: 'small-note', text: `あなたの共有フォルダ: ${sharedMine.length}件が友達のフィードに表示されます。` }));
-    shell.append(renderPage('共有フォルダ / フィード', '自分とフォロー中の友達の共有記事を、いいねが多い順に表示します。メモは非表示です。', content));
   }
 
   if (activePage === 'trash') {
     shell.append(renderPage(
-      'もういいフォルダ / トラッシュ',
-      '右スワイプで削除フォルダへ送り、データベース（このデモではローカル保存）から完全削除します。',
-      renderArticleList(tiredArticles, 'トラッシュは空です。', (article) => renderArticleCard({
+      'ゴミ箱',
+      '戻すか削除',
+      renderArticleList(tiredArticles, 'ゴミ箱は空です', (article) => renderArticleCard({
         article,
         showMemo: true,
-        rightHint: '完全削除',
+        rightHint: '削除',
         onSwipeRight: () => deleteArticle(article.id),
         onMemo: (memo) => updateArticle(article.id, { memo }),
         actions: [
           actionButton('戻す', () => updateArticle(article.id, { folder: FOLDERS.important })),
-          actionButton('完全削除', () => deleteArticle(article.id), 'danger'),
+          actionButton('削除', () => deleteArticle(article.id), 'danger'),
         ],
       })),
     ));
-  }
-
-  if (activePage === 'friends') {
-    shell.append(renderPage('友達をフォロー', 'フォローした友達の共有フォルダだけがフィードページに流れます。', renderFriends()));
   }
 
   root.append(shell);
@@ -191,15 +228,15 @@ function render() {
 
 function renderHero() {
   const section = el('section', { className: 'hero' });
-  const copy = el('div', {}, [
+  const copy = el('div', { className: 'hero-copy-block' }, [
     el('p', { className: 'eyebrow', text: 'Save & Share' }),
-    el('h1', { text: '読みたい記事を保存し、スワイプで共有・整理する。' }),
-    el('p', { className: 'hero-copy', text: 'URLをアップロードすると重要フォルダへ追加。左スワイプで共有、右スワイプで「もういい」へ。友達の共有記事はフィードで読めます。' }),
+    el('h1', { text: '読みたいを、きれいに残す。' }),
+    el('p', { className: 'hero-copy', text: '保存、共有、整理。必要な操作だけ。' }),
   ]);
   const form = el('form', { className: 'upload-card', onsubmit: addArticle }, [
-    el('label', {}, ['記事URL', el('input', { id: 'article-url', placeholder: 'https://example.com/article' })]),
-    el('label', {}, ['タイトル（任意）', el('input', { id: 'article-title', placeholder: '自動でURLから推定できます' })]),
-    el('button', { type: 'submit', text: '重要フォルダに追加' }),
+    el('label', {}, ['URL', el('input', { id: 'article-url', placeholder: 'https://example.com/article' })]),
+    el('label', {}, ['タイトル', el('input', { id: 'article-title', placeholder: '任意' })]),
+    el('button', { type: 'submit', text: '重要に追加' }),
   ]);
   section.append(copy, form);
   return section;
@@ -207,10 +244,9 @@ function renderHero() {
 
 function renderTabs({ importantArticles, tiredArticles, feedArticles }) {
   return el('nav', { className: 'tabs', 'aria-label': 'ページ切り替え' }, [
-    tab('private', 'プライベート', importantArticles.length),
     tab('feed', 'フィード', feedArticles.length),
-    tab('trash', 'トラッシュ', tiredArticles.length),
-    tab('friends', '友達', state.following.length),
+    tab('private', '重要', importantArticles.length),
+    tab('trash', 'ゴミ箱', tiredArticles.length),
   ]);
 }
 
@@ -237,6 +273,7 @@ function renderArticleCard({ article, actions, showMemo = false, ownerLabel, onM
   let startX = null;
   let dragX = 0;
   const host = safeHost(article.url);
+  const images = Array.isArray(article.images) ? article.images : [];
   const card = el('article', { className: 'article-card' });
 
   card.addEventListener('pointerdown', (event) => {
@@ -246,7 +283,7 @@ function renderArticleCard({ article, actions, showMemo = false, ownerLabel, onM
   card.addEventListener('pointermove', (event) => {
     if (startX === null) return;
     dragX = event.clientX - startX;
-    card.style.transform = `translateX(${dragX}px) rotate(${dragX / 28}deg)`;
+    card.style.transform = `translateX(${dragX}px) rotate(${dragX / 36}deg)`;
   });
   const endSwipe = () => {
     if (dragX < -90 && onSwipeLeft) onSwipeLeft();
@@ -261,30 +298,29 @@ function renderArticleCard({ article, actions, showMemo = false, ownerLabel, onM
   if (leftHint || rightHint) {
     card.append(el('div', { className: 'swipe-hints' }, [el('span', { text: leftHint ? `← ${leftHint}` : '' }), el('span', { text: rightHint ? `${rightHint} →` : '' })]));
   }
+
+  if (images.length > 0) {
+    card.append(el('div', { className: images.length > 1 ? 'image-strip' : 'image-strip single' }, images.slice(0, 3).map((imageUrl, index) => (
+      el('figure', { className: 'image-card' }, [
+        el('img', { src: imageUrl, alt: `${article.title} の画像 ${index + 1}`, loading: 'lazy' }),
+      ])
+    ))));
+  }
+
   card.append(
-    el('div', { className: 'card-topline' }, [el('span', { text: ownerLabel || '重要フォルダ' }), el('span', { text: host })]),
+    el('div', { className: 'card-topline' }, [el('span', { text: ownerLabel || '重要' }), el('span', { text: host })]),
     el('a', { className: 'article-title', href: article.url, target: '_blank', rel: 'noreferrer', text: article.title }),
-    el('p', { className: 'article-url', text: article.url }),
   );
+
   if (showMemo) {
-    const textarea = el('textarea', { placeholder: 'この記事について自由にメモ' });
+    const textarea = el('textarea', { placeholder: 'メモ' });
     textarea.value = article.memo;
     textarea.addEventListener('input', (event) => onMemo(event.target.value));
     card.append(el('label', { className: 'memo-box' }, ['メモ', textarea]));
   }
+
   card.append(el('div', { className: 'card-actions' }, actions));
   return card;
-}
-
-function renderFriends() {
-  return el('div', { className: 'friend-grid' }, PEOPLE.map((person) => {
-    const following = state.following.includes(person.id);
-    return el('article', { className: 'friend-card' }, [
-      el('div', { className: 'avatar', text: person.avatar }),
-      el('div', {}, [el('h3', { text: person.name }), el('p', { text: person.bio })]),
-      actionButton(following ? 'フォロー中' : 'フォロー', () => toggleFollow(person.id), following ? 'liked' : ''),
-    ]);
-  }));
 }
 
 function actionButton(text, onClick, className = '') {
@@ -298,14 +334,16 @@ function addArticle(event) {
   const cleanUrl = urlInput.value.trim();
   if (!cleanUrl) return;
   const normalizedUrl = cleanUrl.startsWith('http') ? cleanUrl : `https://${cleanUrl}`;
+  const title = titleInput.value.trim() || inferTitle(normalizedUrl);
   const article = {
     id: `mine-${crypto.randomUUID()}`,
     ownerId: 'me',
     ownerName: 'You',
     url: normalizedUrl,
-    title: titleInput.value.trim() || inferTitle(normalizedUrl),
+    title,
     folder: FOLDERS.important,
     memo: '',
+    images: inferArticleImages(normalizedUrl, title),
     likes: 0,
     createdAt: Date.now(),
   };
@@ -353,13 +391,6 @@ function toggleLike(articleId) {
     articles: current.articles.map((article) => (
       article.id === articleId ? { ...article, likes: Math.max(0, article.likes + (liked ? -1 : 1)) } : article
     )),
-  }));
-}
-
-function toggleFollow(personId) {
-  setState((current) => ({
-    ...current,
-    following: current.following.includes(personId) ? current.following.filter((id) => id !== personId) : [...current.following, personId],
   }));
 }
 
