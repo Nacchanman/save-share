@@ -30,3 +30,19 @@ Then open <http://127.0.0.1:4173>.
 ```bash
 npm run check
 ```
+
+
+## GitHub merge conflicts
+
+If GitHub says this branch has conflicts, update the PR branch locally and keep the Save & Share app version from this branch:
+
+```bash
+git fetch origin
+git checkout <your-pr-branch>
+git merge origin/main
+scripts/resolve-save-share-conflicts.sh
+git commit
+git push
+```
+
+The helper resolves the known conflicts in the SwiftUI app and static web prototype files by choosing the PR branch version. Open `SaveShare.xcodeproj` after pushing to confirm the app still runs.
