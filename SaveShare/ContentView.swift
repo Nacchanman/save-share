@@ -1,10 +1,36 @@
 import SwiftUI
 
+private enum LocalPage: String, CaseIterable, Identifiable {
+    case feed
+    case important
+    case trash
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .feed: return "フィード"
+        case .important: return "重要"
+        case .trash: return "ゴミ箱"
+        }
+    }
+}
+
 struct ContentView: View {
-    @EnvironmentObject private var store: SaveShareStore
-    @State private var selectedPage: AppPage = .privatePage
+    @State private var selectedPage: LocalPage = .feed
     @State private var urlText = ""
     @State private var titleText = ""
+    @State private var articles: [Article] = ContentView.defaultArticles
+    @State private var likedArticleIds: Set<String> = []
+
+    private var myArticles: [Article] { articles.filter { $0.ownerId == "me" } }
+    private var importantArticles: [Article] { myArticles.filter { $0.folder == .important } }
+    private var trashArticles: [Article] { myArticles.filter { $0.folder == .tired } }
+    private var feedArticles: [Article] {
+        articles
+            .filter { $0.folder == .shared }
+            .sorted { $0.likes == $1.likes ? $0.createdAt > $1.createdAt : $0.likes > $1.likes }
+    }
 
     var body: some View {
         NavigationStack {
@@ -30,16 +56,16 @@ struct ContentView: View {
                 .padding(.vertical, 7)
                 .background(AppTheme.blue.opacity(0.12), in: Capsule())
 
-            Text("読みたい記事を保存し、スワイプで共有・整理する。")
+            Text("読みたいを、きれいに残す。")
                 .font(.largeTitle.weight(.black))
                 .tracking(-1.2)
 
-            Text("URLをアップロードすると重要フォルダへ追加。左スワイプで共有、右スワイプで「もういい」へ。友達の共有記事はフィードで読めます。")
+            Text("保存、共有、整理。必要な操作だけ。")
                 .foregroundStyle(.secondary)
                 .lineSpacing(4)
 
             VStack(spacing: 12) {
-                TextField("https://example.com/article", text: $urlText)
+                TextField("URL", text: $urlText)
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
                     .textContentType(.URL)
@@ -50,16 +76,14 @@ struct ContentView: View {
                     .fieldStyle()
 
                 Button {
-                    store.addArticle(url: urlText, title: titleText)
-                    urlText = ""
-                    titleText = ""
-                    selectedPage = .privatePage
+                    addArticle()
                 } label: {
-                    Label("重要フォルダに追加", systemImage: "tray.and.arrow.down.fill")
+                    Label("重要に追加", systemImage: "tray.and.arrow.down.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .disabled(urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .cardStyle()
@@ -67,8 +91,8 @@ struct ContentView: View {
 
     private var pagePicker: some View {
         Picker("ページ", selection: $selectedPage) {
-            ForEach(AppPage.allCases) { page in
-                Text("\(page.title) \(store.count(for: page))").tag(page)
+            ForEach(LocalPage.allCases) { page in
+                Text("\(page.title) \(count(for: page))").tag(page)
             }
         }
         .pickerStyle(.segmented)
@@ -77,114 +101,161 @@ struct ContentView: View {
     @ViewBuilder
     private var pageContent: some View {
         switch selectedPage {
-        case .privatePage:
-            FolderSection(
-                title: "重要フォルダ",
-                description: "左スワイプで共有フォルダ、右スワイプで「もういいフォルダ」に移動します。",
-                emptyText: "重要フォルダは空です。上のフォームからURLを追加してください。",
-                articles: store.importantArticles
-            ) { article in
-                ArticleCardView(
-                    article: article,
-                    ownerLabel: "重要フォルダ",
-                    showMemo: true,
-                    leftHint: "共有へ",
-                    rightHint: "もういいへ",
-                    onMemoChanged: { store.updateMemo(for: article, memo: $0) },
-                    onSwipeLeft: { store.move(article, to: .shared) },
-                    onSwipeRight: { store.move(article, to: .tired) }
-                ) {
-                    Button("共有へ") { store.move(article, to: .shared) }
-                    Button("もういい") { store.move(article, to: .tired) }
-                        .buttonStyle(.bordered)
-                }
-            }
-
         case .feed:
             FolderSection(
-                title: "共有フォルダ / フィード",
-                description: "自分とフォロー中の友達の共有記事を、いいねが多い順に表示します。メモは非表示です。",
-                emptyText: "フィードは空です。友達をフォローするか、記事を共有してください。",
-                articles: store.feedArticles
+                title: "フィード",
+                description: "みんなのおすすめ",
+                emptyText: "まだ何もありません",
+                articles: feedArticles
             ) { article in
                 ArticleCardView(
                     article: article,
-                    ownerLabel: article.ownerId == "me" ? "あなたの共有" : "\(article.ownerName) の共有"
+                    ownerLabel: article.ownerId == "me" ? "自分" : article.ownerName,
+                    isLiked: likedArticleIds.contains(article.id),
+                    likes: article.likes
                 ) {
-                    Button("セーブ") {
-                        store.saveFromFeed(article)
-                        selectedPage = .privatePage
+                    Button("保存") {
+                        saveFromFeed(article)
                     }
                     Button {
-                        store.toggleLike(article)
+                        toggleLike(article)
                     } label: {
-                        Label("\(article.likes)", systemImage: store.likedArticleIds.contains(article.id) ? "heart.fill" : "heart")
+                        Label("\(article.likes)", systemImage: likedArticleIds.contains(article.id) ? "heart.fill" : "heart")
                     }
                     .buttonStyle(.bordered)
                     .tint(.pink)
                 }
+            }
 
-                if store.sharedMineCount > 0 {
-                    Text("あなたの共有フォルダ: \(store.sharedMineCount)件が友達のフィードに表示されます。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+        case .important:
+            FolderSection(
+                title: "重要",
+                description: "左で共有、右でゴミ箱",
+                emptyText: "重要は空です",
+                articles: importantArticles
+            ) { article in
+                ArticleCardView(
+                    article: article,
+                    ownerLabel: "重要",
+                    showMemo: true,
+                    leftHint: "共有",
+                    rightHint: "ゴミ箱",
+                    onMemoChanged: { updateMemo(for: article, memo: $0) },
+                    onSwipeLeft: { move(article, to: ArticleFolder.shared) },
+                    onSwipeRight: { move(article, to: ArticleFolder.tired) }
+                ) {
+                    Button("共有") { move(article, to: ArticleFolder.shared) }
+                    Button("ゴミ箱") { move(article, to: ArticleFolder.tired) }
+                        .buttonStyle(.bordered)
                 }
             }
 
         case .trash:
             FolderSection(
-                title: "もういいフォルダ / トラッシュ",
-                description: "右スワイプで削除フォルダへ送り、データベース（このデモでは端末内保存）から完全削除します。",
-                emptyText: "トラッシュは空です。",
-                articles: store.tiredArticles
+                title: "ゴミ箱",
+                description: "戻すか削除",
+                emptyText: "ゴミ箱は空です",
+                articles: trashArticles
             ) { article in
                 ArticleCardView(
                     article: article,
-                    ownerLabel: "もういいフォルダ",
+                    ownerLabel: "ゴミ箱",
                     showMemo: true,
-                    rightHint: "完全削除",
-                    onMemoChanged: { store.updateMemo(for: article, memo: $0) },
-                    onSwipeRight: { store.delete(article) }
+                    rightHint: "削除",
+                    onMemoChanged: { updateMemo(for: article, memo: $0) },
+                    onSwipeRight: { delete(article) }
                 ) {
-                    Button("戻す") { store.move(article, to: .important) }
-                    Button("完全削除", role: .destructive) { store.delete(article) }
+                    Button("戻す") { move(article, to: ArticleFolder.important) }
+                    Button("削除", role: .destructive) { delete(article) }
                         .buttonStyle(.bordered)
                 }
             }
-
-        case .friends:
-            friendsSection
         }
     }
 
-    private var friendsSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionHeader(title: "友達をフォロー", description: "フォローした友達の共有フォルダだけがフィードページに流れます。")
-
-            ForEach(store.people) { person in
-                HStack(spacing: 14) {
-                    Text(person.avatar)
-                        .font(.title3.weight(.black))
-                        .frame(width: 52, height: 52)
-                        .foregroundStyle(.white)
-                        .background(LinearGradient(colors: [AppTheme.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 16))
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(person.name).font(.headline)
-                        Text(person.bio).font(.subheadline).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button(store.following.contains(person.id) ? "フォロー中" : "フォロー") {
-                        store.toggleFollow(person)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(store.following.contains(person.id) ? .pink : AppTheme.blue)
-                }
-                .cardStyle(padding: 16)
-            }
+    private func count(for page: LocalPage) -> Int {
+        switch page {
+        case .feed: return feedArticles.count
+        case .important: return importantArticles.count
+        case .trash: return trashArticles.count
         }
-        .cardStyle()
     }
+
+    private func addArticle() {
+        let trimmedURL = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedURL.isEmpty else { return }
+        let normalizedURL = trimmedURL.hasPrefix("http") ? trimmedURL : "https://\(trimmedURL)"
+        let title = titleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? inferTitle(from: normalizedURL) : titleText
+        let article = Article(
+            id: "mine-\(UUID().uuidString)",
+            ownerId: "me",
+            ownerName: "You",
+            url: normalizedURL,
+            title: title,
+            folder: ArticleFolder.important,
+            memo: "",
+            likes: 0,
+            createdAt: Date()
+        )
+        articles.insert(article, at: 0)
+        urlText = ""
+        titleText = ""
+        selectedPage = .important
+    }
+
+    private func move(_ article: Article, to folder: ArticleFolder) {
+        guard let index = articles.firstIndex(where: { $0.id == article.id }) else { return }
+        articles[index].folder = folder
+    }
+
+    private func updateMemo(for article: Article, memo: String) {
+        guard let index = articles.firstIndex(where: { $0.id == article.id }) else { return }
+        articles[index].memo = memo
+    }
+
+    private func delete(_ article: Article) {
+        articles.removeAll { $0.id == article.id }
+        likedArticleIds.remove(article.id)
+    }
+
+    private func saveFromFeed(_ article: Article) {
+        let alreadySaved = articles.contains { $0.ownerId == "me" && $0.url == article.url && $0.folder != .tired }
+        guard !alreadySaved else { return }
+        var copy = article
+        copy.id = "mine-\(UUID().uuidString)"
+        copy.ownerId = "me"
+        copy.ownerName = "You"
+        copy.folder = ArticleFolder.important
+        copy.memo = ""
+        copy.likes = 0
+        copy.createdAt = Date()
+        articles.insert(copy, at: 0)
+        selectedPage = .important
+    }
+
+    private func toggleLike(_ article: Article) {
+        guard let index = articles.firstIndex(where: { $0.id == article.id }) else { return }
+        if likedArticleIds.contains(article.id) {
+            likedArticleIds.remove(article.id)
+            articles[index].likes = max(0, articles[index].likes - 1)
+        } else {
+            likedArticleIds.insert(article.id)
+            articles[index].likes += 1
+        }
+    }
+
+    private func inferTitle(from url: String) -> String {
+        guard let components = URLComponents(string: url), let host = components.host else { return url }
+        let path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return path.isEmpty ? host : "\(host) / \(path.replacingOccurrences(of: "/", with: " / "))"
+    }
+
+    private static let defaultArticles: [Article] = [
+        Article(id: "mine-1", ownerId: "me", ownerName: "You", url: "https://developer.apple.com/design/human-interface-guidelines", title: "Human Interface Guidelines", folder: ArticleFolder.important, memo: "iOS版のUI確認に使う", likes: 7, createdAt: Date().addingTimeInterval(-120)),
+        Article(id: "friend-1", ownerId: "mika", ownerName: "Mika", url: "https://example.com/design-systems", title: "小さなチームで育てるデザインシステム", folder: ArticleFolder.shared, memo: "", likes: 18, createdAt: Date().addingTimeInterval(-900)),
+        Article(id: "friend-2", ownerId: "ren", ownerName: "Ren", url: "https://example.com/ai-agents-productivity", title: "AIエージェントで変わる個人の生産性", folder: ArticleFolder.shared, memo: "", likes: 31, createdAt: Date().addingTimeInterval(-1800)),
+        Article(id: "friend-3", ownerId: "sora", ownerName: "Sora", url: "https://example.com/public-libraries", title: "公共図書館とデジタルアーカイブの未来", folder: ArticleFolder.shared, memo: "", likes: 12, createdAt: Date().addingTimeInterval(-3600))
+    ]
 }
 
 struct FolderSection<Content: View>: View {
