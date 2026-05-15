@@ -110,9 +110,7 @@ struct ContentView: View {
             ) { article in
                 ArticleCardView(
                     article: article,
-                    ownerLabel: article.ownerId == "me" ? "自分" : article.ownerName,
-                    isLiked: likedArticleIds.contains(article.id),
-                    likes: article.likes
+                    ownerLabel: article.ownerId == "me" ? "自分" : article.ownerName
                 ) {
                     Button("保存") {
                         saveFromFeed(article)
