@@ -1,0 +1,9 @@
+{
+  "appId": "com.nacchanman.saveshare",
+  "appName": "Save Share",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "ios": {
+    "contentInset": "always"
+  }
+}
