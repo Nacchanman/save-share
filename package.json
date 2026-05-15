@@ -1,0 +1,10 @@
+{
+  "name": "save-share",
+  "version": "1.0.0",
+  "description": "A swipe-based read-it-later and social sharing app prototype.",
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 4173",
+    "check": "node --check src/main.js"
+  }
+}
